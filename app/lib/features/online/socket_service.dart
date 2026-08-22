@@ -123,20 +123,32 @@ class SocketService {
   /// `https://tavla-server.onrender.com`). Safe to call again after
   /// [dispose] to reconnect with a possibly different URL.
   ///
-  /// Transport list is `['polling', 'websocket']` — polling MUST be first.
-  /// The list order is the priority order the client opens its *initial*
-  /// transport with, not just a fallback pool: putting `websocket` first
-  /// (an earlier version of this code did) makes every single connection
-  /// AND every retry attempt a raw-WebSocket handshake, which needs a full
-  /// HTTP Upgrade to succeed through every proxy in front of the server —
-  /// on Render's free tier (fronted by Cloudflare) that upgrade can hang
-  /// indefinitely instead of failing fast, which is what made the app get
-  /// stuck forever on the connecting screen. Polling first means the
-  /// initial handshake is a plain HTTP request (always gets through, and
-  /// is what actually wakes a sleeping Render instance), and the socket
-  /// transparently upgrades to WebSocket in the background afterwards —
-  /// if that upgrade probe fails, engine.io just keeps using polling
-  /// without ever blocking the connection.
+  /// Transport list is `['polling']` — WebSocket upgrade TEMPORARILY
+  /// disabled entirely as a diagnostic (see project history: Piyami sees
+  /// a real 'Sunucuya bağlanılamadı (detay: timeout)' on his mobile
+  /// carrier network even though (a) a direct browser hit to the plain
+  /// polling handshake endpoint succeeds instantly on that exact network,
+  /// and (b) a manual curl WebSocket-upgrade handshake against the nginx
+  /// proxy from an unconstrained network confirms nginx's WS proxying
+  /// itself is configured correctly. That leaves the WS upgrade probe
+  /// specifically hanging on his carrier path as the leading remaining
+  /// suspect, since it's the one connection step a bare browser GET never
+  /// exercises. This build removes it entirely so we can isolate whether
+  /// pure long-polling connects reliably on that network — restore
+  /// `['polling', 'websocket']` once that's confirmed one way or another.
+  ///
+  /// Previously (kept for context): the list order is the priority order
+  /// the client opens its *initial* transport with, not just a fallback
+  /// pool — putting `websocket` first (an earlier version of this code
+  /// did) made every single connection AND every retry attempt a raw
+  /// WebSocket handshake, which needs a full HTTP Upgrade to succeed
+  /// through every proxy in front of the server; on Render's free tier
+  /// (fronted by Cloudflare) that upgrade could hang indefinitely instead
+  /// of failing fast, which is what made the app get stuck forever on the
+  /// connecting screen back then. Polling-first (when websocket is
+  /// present in the list at all) means the initial handshake is a plain
+  /// HTTP request that always gets through, and the socket transparently
+  /// upgrades to WebSocket in the background afterwards.
   ///
   /// Timeout/retry values below assume an always-on server that responds
   /// in well under a second when healthy (the current deployment target,
@@ -155,7 +167,7 @@ class SocketService {
     final socket = io.io(
       serverUrl,
       io.OptionBuilder()
-          .setTransports(['polling', 'websocket'])
+          .setTransports(['polling']) // diagnostic: WS upgrade disabled, see class doc above
           .enableAutoConnect()
           .enableReconnection()
           .setReconnectionAttempts(5)
