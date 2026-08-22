@@ -56,6 +56,7 @@ class SocketService {
   final _connectedController = StreamController<void>.broadcast();
   final _disconnectedController = StreamController<void>.broadcast();
   final _reconnectFailedController = StreamController<void>.broadcast();
+  final _reconnectAttemptController = StreamController<int>.broadcast();
 
   Stream<RoomCreatedPayload> get onRoomCreated => _roomCreatedController.stream;
   Stream<JoinedRoomPayload> get onJoinedRoom => _joinedRoomController.stream;
@@ -81,36 +82,52 @@ class SocketService {
   /// each individual failed attempt while retries are still in flight.
   Stream<void> get onReconnectFailed => _reconnectFailedController.stream;
 
+  /// Fires before each automatic retry (attempt number, 1-based) — used by
+  /// the UI to swap the generic "connecting..." spinner text for a
+  /// "server is waking up" hint once it's clear the first attempt(s)
+  /// didn't land instantly (see [OnlineGameController]).
+  Stream<int> get onReconnectAttempt => _reconnectAttemptController.stream;
+
   bool get isConnected => _socket?.connected ?? false;
 
   /// Opens a connection to the realtime server at [serverUrl] (e.g.
   /// `https://tavla-server.onrender.com`). Safe to call again after
   /// [dispose] to reconnect with a possibly different URL.
   ///
-  /// Transport is deliberately left to the client's default negotiation
-  /// (long-polling first, then upgrading to WebSocket) rather than forced
-  /// to `['websocket']` only: a websocket-only connection has to complete
-  /// a raw HTTP Upgrade through every proxy in front of the server, and on
-  /// some hosts (e.g. Render's free tier, fronted by Cloudflare) that
-  /// first-hop upgrade can fail outright even though the server is
-  /// perfectly reachable — while polling, which is plain HTTP, always
-  /// gets through and the client transparently upgrades once connected.
-  /// Reconnection attempts/timeout are generous to tolerate a Render
-  /// free-tier instance waking up from an idle sleep (can take up to
-  /// ~50s).
+  /// Transport list is `['polling', 'websocket']` — polling MUST be first.
+  /// The list order is the priority order the client opens its *initial*
+  /// transport with, not just a fallback pool: putting `websocket` first
+  /// (an earlier version of this code did) makes every single connection
+  /// AND every retry attempt a raw-WebSocket handshake, which needs a full
+  /// HTTP Upgrade to succeed through every proxy in front of the server —
+  /// on Render's free tier (fronted by Cloudflare) that upgrade can hang
+  /// indefinitely instead of failing fast, which is what made the app get
+  /// stuck forever on the connecting screen. Polling first means the
+  /// initial handshake is a plain HTTP request (always gets through, and
+  /// is what actually wakes a sleeping Render instance), and the socket
+  /// transparently upgrades to WebSocket in the background afterwards —
+  /// if that upgrade probe fails, engine.io just keeps using polling
+  /// without ever blocking the connection.
+  ///
+  /// Timeout/retry values are tuned for a cold Render free-tier instance
+  /// (documented wake time up to ~60s): each attempt waits up to 20s for
+  /// a response before being abandoned, and up to 10 attempts are made —
+  /// at least ~90s of automatic retrying (comfortably over the ~45-60s
+  /// floor needed) before [onReconnectFailed] fires and the UI is allowed
+  /// to show a real failure state.
   void connect(String serverUrl) {
     _socket?.dispose();
 
     final socket = io.io(
       serverUrl,
       io.OptionBuilder()
-          .setTransports(['websocket', 'polling'])
+          .setTransports(['polling', 'websocket'])
           .enableAutoConnect()
           .enableReconnection()
-          .setReconnectionAttempts(20)
-          .setReconnectionDelay(1000)
-          .setReconnectionDelayMax(5000)
-          .setTimeout(45000)
+          .setReconnectionAttempts(10)
+          .setReconnectionDelay(2000)
+          .setReconnectionDelayMax(8000)
+          .setTimeout(20000)
           .build(),
     );
 
@@ -119,6 +136,10 @@ class SocketService {
     socket.onConnectError((data) => _connectErrorController.add(data?.toString() ?? 'connect_error'));
     socket.onError((data) => _connectErrorController.add(data?.toString() ?? 'error'));
     socket.onReconnectFailed((_) => _reconnectFailedController.add(null));
+    socket.onReconnectAttempt((data) {
+      final attempt = data is int ? data : int.tryParse(data?.toString() ?? '') ?? 0;
+      _reconnectAttemptController.add(attempt);
+    });
 
     socket.on('room_created', (data) {
       _roomCreatedController.add(RoomCreatedPayload.fromJson(_asMap(data)));

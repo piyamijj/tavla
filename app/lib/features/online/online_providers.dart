@@ -45,6 +45,14 @@ class OnlineState {
   final bool rematchRequestedByMe;
   final bool rematchOfferedByOpponent;
 
+  /// Only meaningful while [status] is [ConnectionStatus.connecting]:
+  /// overrides the generic "connecting..." spinner text once the first
+  /// attempt has failed and the client has moved on to an automatic
+  /// retry — this is what tells the player a Render free-tier cold start
+  /// is likely in progress instead of leaving them staring at a spinner
+  /// with no explanation for up to ~90 seconds.
+  final String? connectingHint;
+
   const OnlineState({
     required this.status,
     this.roomCode,
@@ -55,6 +63,7 @@ class OnlineState {
     this.errorMessage,
     this.rematchRequestedByMe = false,
     this.rematchOfferedByOpponent = false,
+    this.connectingHint,
   });
 
   factory OnlineState.initial() => const OnlineState(status: ConnectionStatus.disconnected);
@@ -70,6 +79,8 @@ class OnlineState {
     bool clearError = false,
     bool? rematchRequestedByMe,
     bool? rematchOfferedByOpponent,
+    String? connectingHint,
+    bool clearConnectingHint = false,
   }) {
     return OnlineState(
       status: status ?? this.status,
@@ -81,6 +92,7 @@ class OnlineState {
       errorMessage: clearError ? null : (errorMessage ?? this.errorMessage),
       rematchRequestedByMe: rematchRequestedByMe ?? this.rematchRequestedByMe,
       rematchOfferedByOpponent: rematchOfferedByOpponent ?? this.rematchOfferedByOpponent,
+      connectingHint: clearConnectingHint ? null : (connectingHint ?? this.connectingHint),
     );
   }
 }
@@ -125,13 +137,17 @@ class OnlineGameController extends StateNotifier<OnlineState> {
   }
 
   void _connect() {
-    state = state.copyWith(status: ConnectionStatus.connecting, clearError: true);
+    state = state.copyWith(
+      status: ConnectionStatus.connecting,
+      clearError: true,
+      clearConnectingHint: true,
+    );
     _socket.connect(config.serverUrl);
 
     _subs.addAll([
       _socket.onConnected.listen((_) {
         if (state.roomCode == null || state.myColor == null) {
-          state = state.copyWith(status: ConnectionStatus.connected);
+          state = state.copyWith(status: ConnectionStatus.connected, clearConnectingHint: true);
         } else {
           // Reconnected mid-match (Socket.io issues a new socket id on
           // every reconnect): ask the server to re-attach this socket to
@@ -157,6 +173,18 @@ class OnlineGameController extends StateNotifier<OnlineState> {
           status: ConnectionStatus.error,
           errorMessage: 'Sunucuya bağlanılamadı',
         );
+      }),
+      _socket.onReconnectAttempt.listen((_) {
+        // The first attempt never got a callback here — this only fires
+        // once a retry is scheduled, i.e. the previous attempt already
+        // failed or timed out. That's exactly the moment to stop showing
+        // a generic spinner and tell the player what's actually likely
+        // happening (their Render instance waking up from sleep).
+        if (state.status == ConnectionStatus.connecting) {
+          state = state.copyWith(
+            connectingHint: 'Sunucu uyandırılıyor, lütfen bekleyin...',
+          );
+        }
       }),
       _socket.onDisconnected.listen((_) {
         if (state.roomCode != null) {

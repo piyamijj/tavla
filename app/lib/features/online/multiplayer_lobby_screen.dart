@@ -205,12 +205,16 @@ class _MultiplayerLobbyScreenState extends ConsumerState<MultiplayerLobbyScreen>
       case ConnectionStatus.connecting:
         return GlowPanel(
           glowColor: AppColors.neonCyan,
-          child: const Column(
+          child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              CircularProgressIndicator(color: AppColors.neonCyan),
-              SizedBox(height: 14),
-              Text(AppStrings.connecting, style: TextStyle(color: AppColors.textSecondary)),
+              const CircularProgressIndicator(color: AppColors.neonCyan),
+              const SizedBox(height: 14),
+              Text(
+                state.connectingHint ?? AppStrings.connecting,
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: AppColors.textSecondary),
+              ),
             ],
           ),
         );
