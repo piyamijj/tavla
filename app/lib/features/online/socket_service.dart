@@ -138,12 +138,17 @@ class SocketService {
   /// if that upgrade probe fails, engine.io just keeps using polling
   /// without ever blocking the connection.
   ///
-  /// Timeout/retry values are tuned for a cold Render free-tier instance
-  /// (documented wake time up to ~60s): each attempt waits up to 20s for
-  /// a response before being abandoned, and up to 10 attempts are made —
-  /// at least ~90s of automatic retrying (comfortably over the ~45-60s
-  /// floor needed) before [onReconnectFailed] fires and the UI is allowed
-  /// to show a real failure state.
+  /// Timeout/retry values below assume an always-on server that responds
+  /// in well under a second when healthy (the current deployment target,
+  /// Piyami's own AWS instance) — NOT the cold-starting Render free tier
+  /// this was originally tuned for (that old tuning allowed up to ~90s+
+  /// of retrying to cover a documented ~60s wake time, which is no
+  /// longer a real scenario and only made every real failure take
+  /// minutes to surface). Each attempt waits up to 10s for a response
+  /// before being abandoned, and up to 5 attempts are made — comfortably
+  /// enough to ride out a brief blip or restart, while still reaching
+  /// [onReconnectFailed] in well under a minute for a genuine outage
+  /// instead of leaving the player staring at a spinner.
   void connect(String serverUrl) {
     _socket?.dispose();
 
@@ -153,10 +158,10 @@ class SocketService {
           .setTransports(['polling', 'websocket'])
           .enableAutoConnect()
           .enableReconnection()
-          .setReconnectionAttempts(10)
-          .setReconnectionDelay(2000)
-          .setReconnectionDelayMax(8000)
-          .setTimeout(20000)
+          .setReconnectionAttempts(5)
+          .setReconnectionDelay(1500)
+          .setReconnectionDelayMax(5000)
+          .setTimeout(10000)
           .build(),
     );
 

@@ -157,16 +157,28 @@ class OnlineGameController extends StateNotifier<OnlineState> {
   /// everyone else's challenge list.
   bool _wantsLobbyPresence = false;
 
-  /// Independent safety net on top of [SocketService]'s own ~90s
-  /// reconnection budget: guarantees the UI can never stay on
-  /// [ConnectionStatus.connecting] forever, even if some future change
-  /// (a library regression, a network path that never surfaces an error
-  /// at all, a platform bug) breaks the normal `onReconnectFailed` path.
-  /// Reset on every [_connect] call and cancelled the moment a terminal
-  /// state (connected/error/disposed) is reached.
+  /// Independent safety net on top of [SocketService]'s own reconnection
+  /// budget (5 attempts x up to 10s + growing delays — comfortably under
+  /// a minute in the worst case, see [SocketService.connect]):
+  /// guarantees the UI can never stay on [ConnectionStatus.connecting]
+  /// forever, even if some future change (a library regression, a
+  /// network path that never surfaces an error at all, a platform bug)
+  /// breaks the normal `onReconnectFailed` path. Kept comfortably above
+  /// that real budget so it stays a last-resort backstop rather than the
+  /// primary failure path — cutting it off any tighter would risk
+  /// showing a premature failure while socket.io is still legitimately
+  /// mid-retry. Reset on every [_connect] call and cancelled the moment
+  /// a terminal state (connected/error/disposed) is reached.
   Timer? _connectWatchdog;
 
-  static const _connectWatchdogDuration = Duration(seconds: 100);
+  static const _connectWatchdogDuration = Duration(seconds: 75);
+
+  /// Last raw error text seen from a single failed connection attempt
+  /// (see [SocketService.onConnectError]) — kept only so the watchdog
+  /// above can show something more useful than a generic timeout message
+  /// if it ever has to fire; the normal `onReconnectFailed` path already
+  /// surfaces this on its own.
+  String? _lastConnectErrorDetail;
 
   OnlineGameController(this._ref) : super(OnlineState.initial()) {
     _connect(_ref.read(settingsProvider).serverUrl);
@@ -187,17 +199,22 @@ class OnlineGameController extends StateNotifier<OnlineState> {
     );
     _socket.connect(serverUrl);
 
+    _lastConnectErrorDetail = null;
     _connectWatchdog?.cancel();
     _connectWatchdog = Timer(_connectWatchdogDuration, () {
       // Only fires if still stuck connecting when the watchdog expires —
       // a normal connect/error transition already cancels this timer, so
       // this is purely a last-resort backstop, not the primary failure
-      // path (see class doc on [_connectWatchdog]).
+      // path (see class doc on [_connectWatchdog]). Includes the last
+      // attempt's raw error if one was seen, since a generic "timeout"
+      // message here would otherwise mask whatever the real underlying
+      // problem actually was.
       if (state.status == ConnectionStatus.connecting) {
-        state = state.copyWith(
-          status: ConnectionStatus.error,
-          errorMessage: 'Sunucuya bağlanılamadı (zaman aşımı)',
-        );
+        final detail = _lastConnectErrorDetail;
+        final message = (detail == null || detail.isEmpty)
+            ? 'Sunucuya bağlanılamadı (zaman aşımı)'
+            : 'Sunucuya bağlanılamadı (zaman aşımı)\n(detay: $detail)';
+        state = state.copyWith(status: ConnectionStatus.error, errorMessage: message);
       }
     });
 
@@ -209,6 +226,7 @@ class OnlineGameController extends StateNotifier<OnlineState> {
     _subs.addAll([
       _socket.onConnected.listen((_) {
         _connectWatchdog?.cancel();
+        _lastConnectErrorDetail = null;
         if (state.roomCode == null || state.myColor == null) {
           state = state.copyWith(status: ConnectionStatus.connected, clearConnectingHint: true);
           if (_wantsLobbyPresence) _socket.enterLobby(_nickname);
@@ -223,14 +241,15 @@ class OnlineGameController extends StateNotifier<OnlineState> {
           );
         }
       }),
-      _socket.onConnectError.listen((_) {
+      _socket.onConnectError.listen((detail) {
         // A single failed attempt is not fatal — automatic reconnection
-        // (see SocketService.connect) keeps retrying underneath, which
-        // matters most right after a Render free-tier instance wakes up
-        // from sleep (the first few attempts routinely fail while it
-        // boots). Only flip to the error screen once retries are fully
-        // exhausted, via onReconnectFailed below; until then just stay on
-        // the connecting spinner.
+        // (see SocketService.connect) keeps retrying underneath. Only
+        // flip to the error screen once retries are fully exhausted, via
+        // onReconnectFailed below; until then just stay on the
+        // connecting spinner. Still recorded here so the watchdog above
+        // has something real to show if it ever ends up being the one
+        // that fires.
+        _lastConnectErrorDetail = detail;
       }),
       _socket.onReconnectFailed.listen((detail) {
         // Append the raw underlying error (DNS failure, TLS/handshake
@@ -250,11 +269,11 @@ class OnlineGameController extends StateNotifier<OnlineState> {
         // The first attempt never got a callback here — this only fires
         // once a retry is scheduled, i.e. the previous attempt already
         // failed or timed out. That's exactly the moment to stop showing
-        // a generic spinner and tell the player what's actually likely
-        // happening (their Render instance waking up from sleep).
+        // a plain spinner and let the player know it's still actively
+        // trying rather than silently stuck.
         if (state.status == ConnectionStatus.connecting) {
           state = state.copyWith(
-            connectingHint: 'Sunucu uyandırılıyor, lütfen bekleyin...',
+            connectingHint: 'Sunucuya bağlanılıyor, tekrar deneniyor...',
           );
         }
       }),
