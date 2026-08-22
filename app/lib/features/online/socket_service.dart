@@ -164,18 +164,44 @@ class SocketService {
   void connect(String serverUrl) {
     _socket?.dispose();
 
-    final socket = io.io(
-      serverUrl,
-      io.OptionBuilder()
-          .setTransports(['polling']) // diagnostic: WS upgrade disabled, see class doc above
-          .enableAutoConnect()
-          .enableReconnection()
-          .setReconnectionAttempts(5)
-          .setReconnectionDelay(1500)
-          .setReconnectionDelayMax(5000)
-          .setTimeout(10000)
-          .build(),
-    );
+    // ignore: avoid_print
+    print('[SocketService] connect() called with serverUrl="$serverUrl"');
+
+    io.Socket socket;
+    try {
+      socket = io.io(
+        serverUrl,
+        io.OptionBuilder()
+            .setTransports(['polling']) // diagnostic: WS upgrade disabled, see class doc above
+            .enableAutoConnect()
+            .enableReconnection()
+            .setReconnectionAttempts(5)
+            .setReconnectionDelay(1500)
+            .setReconnectionDelayMax(5000)
+            .setTimeout(10000)
+            .build(),
+      );
+    } catch (e, st) {
+      // Diagnostic hardening: if `io.io(...)` itself throws synchronously
+      // (e.g. a malformed [serverUrl] — bad/missing scheme, stray
+      // whitespace from a stale Settings value, an empty string), this
+      // used to be a silent dead end: no socket object exists yet, so
+      // none of the event handlers below are ever attached, no network
+      // request is ever attempted (nothing to see in server-side logs),
+      // and `_lastErrorDetail` stays null — the UI just sits stuck until
+      // the independent watchdog in [OnlineGameController] eventually
+      // times out with the generic message, with zero clue why. Capture
+      // and surface it here instead so a bad URL (or any other
+      // synchronous construction failure) reports a real, specific error
+      // immediately instead of masquerading as a generic connection
+      // timeout.
+      _lastErrorDetail = 'socket_init_failed: $e';
+      // ignore: avoid_print
+      print('[SocketService] io.io() threw during construction: $e\n$st');
+      _connectErrorController.add(_lastErrorDetail!);
+      _reconnectFailedController.add(_lastErrorDetail);
+      return;
+    }
 
     socket.onConnect((_) {
       _lastErrorDetail = null;
