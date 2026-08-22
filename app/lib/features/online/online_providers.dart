@@ -212,8 +212,8 @@ class OnlineGameController extends StateNotifier<OnlineState> {
       if (state.status == ConnectionStatus.connecting) {
         final detail = _lastConnectErrorDetail;
         final message = (detail == null || detail.isEmpty)
-            ? 'Sunucuya bağlanılamadı (zaman aşımı)'
-            : 'Sunucuya bağlanılamadı (zaman aşımı)\n(detay: $detail)';
+            ? 'Sunucuya bağlanılamadı (zaman aşımı)\n(sunucu: $serverUrl)'
+            : 'Sunucuya bağlanılamadı (zaman aşımı)\n(detay: $detail)\n(sunucu: $serverUrl)';
         state = state.copyWith(status: ConnectionStatus.error, errorMessage: message);
       }
     });
@@ -261,8 +261,8 @@ class OnlineGameController extends StateNotifier<OnlineState> {
         // anything.
         _connectWatchdog?.cancel();
         final message = (detail == null || detail.isEmpty)
-            ? 'Sunucuya bağlanılamadı'
-            : 'Sunucuya bağlanılamadı\n(detay: $detail)';
+            ? 'Sunucuya bağlanılamadı\n(sunucu: $serverUrl)'
+            : 'Sunucuya bağlanılamadı\n(detay: $detail)\n(sunucu: $serverUrl)';
         state = state.copyWith(status: ConnectionStatus.error, errorMessage: message);
       }),
       _socket.onReconnectAttempt.listen((_) {
