@@ -2,10 +2,14 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// Default realtime server URL used until the player configures their own
-/// in Settings. Points at the deployed Render backend by default; change
-/// this (or override it from the Settings screen) for local/dev testing
-/// against `http://localhost:3000`.
-const String kDefaultServerUrl = 'https://cyber-tavla-server.onrender.com';
+/// in Settings. Points at Piyami's own AWS EC2 instance (nginx + certbot
+/// TLS termination, reverse-proxied to the Node process on port 3000 —
+/// see AWS_DEPLOY_GUIDE.md) by default; change this (or override it from
+/// the Settings screen) for local/dev testing against
+/// `http://localhost:3000`. Render (`cyber-tavla-server.onrender.com`) was
+/// the original host and is left running as a fallback but is no longer
+/// the default.
+const String kDefaultServerUrl = 'https://cytavla.duckdns.org';
 
 const String _kKeySound = 'settings.sound';
 const String _kKeyMusic = 'settings.music';
