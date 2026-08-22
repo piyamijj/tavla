@@ -1,12 +1,29 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'app/router.dart';
 import 'app/theme.dart';
 import 'core/constants/app_strings.dart';
+import 'core/network/pinned_dns_http_overrides.dart';
 import 'features/online/online_providers.dart';
+import 'features/settings/settings_providers.dart';
 
 void main() {
+  // Some devices cannot resolve the realtime server's hostname at all —
+  // a Private DNS setting, an ad-block/VPN app, or a carrier/device DNS
+  // filter can silently blocklist a domain (dynamic-DNS domains like
+  // *.duckdns.org are a common target) before any network request is
+  // even attempted, surfacing as `SocketException: Failed host lookup`.
+  // This installs a last-resort fallback — see PinnedDnsHttpOverrides —
+  // that only kicks in when normal DNS for this specific host fails; it
+  // never overrides a working resolution and never touches any other
+  // hostname.
+  HttpOverrides.global = PinnedDnsHttpOverrides({
+    Uri.parse(kDefaultServerUrl).host: '13.53.56.176',
+  });
+
   // Built explicitly (instead of just wrapping the app in a bare
   // `ProviderScope`) so the multiplayer connection can be kicked off
   // right here, once, as part of app bootstrap — this is what makes the
