@@ -11,6 +11,20 @@ import 'features/online/online_providers.dart';
 import 'features/settings/settings_providers.dart';
 
 void main() {
+  // Must be the very first call: everything below (the ProviderContainer
+  // read, which eagerly constructs SettingsController and calls
+  // SharedPreferences.getInstance() — a platform-channel round trip) runs
+  // before `runApp()` would otherwise initialize the widgets binding.
+  // Without this, that platform-channel call fires before the engine has
+  // a binary messenger attached to route its response back through. In
+  // debug mode Flutter's own asserts happen to catch this early and fail
+  // loudly; in a release APK asserts are stripped out, so the call can
+  // simply never resolve — a silent, permanent hang with no exception and
+  // no visible cause, exactly the kind of "stuck forever, no error"
+  // regression introduced by moving provider reads into main() for
+  // eager auto-connect.
+  WidgetsFlutterBinding.ensureInitialized();
+
   // Some devices cannot resolve the realtime server's hostname at all —
   // a Private DNS setting, an ad-block/VPN app, or a carrier/device DNS
   // filter can silently blocklist a domain (dynamic-DNS domains like

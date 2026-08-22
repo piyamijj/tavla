@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'dart:io';
 
 /// A dart:io [HttpOverrides] that pins a small, known set of hostnames to
@@ -50,6 +49,18 @@ class PinnedDnsHttpOverrides extends HttpOverrides {
   @override
   HttpClient createHttpClient(SecurityContext? context) {
     final client = super.createHttpClient(context);
+
+    // Bounds the raw TCP connect step itself (not just the DNS-lookup
+    // phase this factory below controls): if a connection attempt is
+    // silently dropped at the network level — no RST, no error, packets
+    // just vanish, which some carrier/NAT paths do — the OS's own TCP
+    // connect timeout can run far longer than any timeout declared
+    // elsewhere in this app (and varies unpredictably by platform).
+    // Setting this makes [HttpClient] itself cancel a stalled attempt and
+    // surface a real [SocketException] once this ceiling is hit, well
+    // under socket.io's own 20s per-attempt budget, so a network path
+    // that never actively fails can't leave the app stuck indefinitely.
+    client.connectionTimeout = const Duration(seconds: 8);
 
     client.connectionFactory = (Uri uri, String? proxyHost, int? proxyPort) async {
       // Proxies aren't used anywhere in this app; if that ever changes,

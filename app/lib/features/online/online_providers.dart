@@ -157,6 +157,17 @@ class OnlineGameController extends StateNotifier<OnlineState> {
   /// everyone else's challenge list.
   bool _wantsLobbyPresence = false;
 
+  /// Independent safety net on top of [SocketService]'s own ~90s
+  /// reconnection budget: guarantees the UI can never stay on
+  /// [ConnectionStatus.connecting] forever, even if some future change
+  /// (a library regression, a network path that never surfaces an error
+  /// at all, a platform bug) breaks the normal `onReconnectFailed` path.
+  /// Reset on every [_connect] call and cancelled the moment a terminal
+  /// state (connected/error/disposed) is reached.
+  Timer? _connectWatchdog;
+
+  static const _connectWatchdogDuration = Duration(seconds: 100);
+
   OnlineGameController(this._ref) : super(OnlineState.initial()) {
     _connect(_ref.read(settingsProvider).serverUrl);
 
@@ -176,6 +187,20 @@ class OnlineGameController extends StateNotifier<OnlineState> {
     );
     _socket.connect(serverUrl);
 
+    _connectWatchdog?.cancel();
+    _connectWatchdog = Timer(_connectWatchdogDuration, () {
+      // Only fires if still stuck connecting when the watchdog expires —
+      // a normal connect/error transition already cancels this timer, so
+      // this is purely a last-resort backstop, not the primary failure
+      // path (see class doc on [_connectWatchdog]).
+      if (state.status == ConnectionStatus.connecting) {
+        state = state.copyWith(
+          status: ConnectionStatus.error,
+          errorMessage: 'Sunucuya bağlanılamadı (zaman aşımı)',
+        );
+      }
+    });
+
     for (final sub in _subs) {
       sub.cancel();
     }
@@ -183,6 +208,7 @@ class OnlineGameController extends StateNotifier<OnlineState> {
 
     _subs.addAll([
       _socket.onConnected.listen((_) {
+        _connectWatchdog?.cancel();
         if (state.roomCode == null || state.myColor == null) {
           state = state.copyWith(status: ConnectionStatus.connected, clearConnectingHint: true);
           if (_wantsLobbyPresence) _socket.enterLobby(_nickname);
@@ -214,6 +240,7 @@ class OnlineGameController extends StateNotifier<OnlineState> {
         // at all — is at least visible to whoever is looking at the
         // screen, instead of a single generic message that could mean
         // anything.
+        _connectWatchdog?.cancel();
         final message = (detail == null || detail.isEmpty)
             ? 'Sunucuya bağlanılamadı'
             : 'Sunucuya bağlanılamadı\n(detay: $detail)';
@@ -415,6 +442,7 @@ class OnlineGameController extends StateNotifier<OnlineState> {
 
   @override
   void dispose() {
+    _connectWatchdog?.cancel();
     for (final sub in _subs) {
       sub.cancel();
     }
