@@ -1,30 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!--
-  Release-build-type manifest overlay: merged automatically into the
-  final AndroidManifest.xml for release builds only, on top of whatever
-  `flutter create` generates at src/main/AndroidManifest.xml.
-
-  Why this file exists here: the default template Flutter's own
-  `flutter create` produces at src/main/AndroidManifest.xml does not
-  declare the INTERNET permission (this is documented Flutter behavior,
-  not a mistake in the generated file) — Flutter's tooling only adds it
-  automatically to a separate debug-only overlay it manages itself, so a
-  debug build appears to have network access while a release build
-  silently does not unless this is declared explicitly. Every release
-  APK built by this project's CI, until this file was added, had no
-  network permission at all, which surfaces as connection/DNS-looking
-  failures (e.g. `SocketException: Failed host lookup`) that have
-  nothing to do with DNS, TLS, or server configuration — no network
-  request of any kind can succeed without this permission, regardless of
-  what the app's own connection code does.
-
-  Placed under src/release/ rather than src/main/ specifically because
-  android/ is not committed to this repository — CI regenerates it fresh
-  on every run via `flutter create --platforms=android .`, which writes
-  (and would overwrite) src/main/AndroidManifest.xml but has no reason to
-  touch this build-type-specific path, since it is not part of what
-  `flutter create`'s main-variant template manages.
--->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Release-build-type manifest overlay, merged automatically by
+         Gradle into the final manifest for release builds only.
+
+         flutter create's default template (src/main/AndroidManifest.xml,
+         regenerated fresh by CI on every run) does not declare the
+         INTERNET permission for release builds - confirmed via Flutter's
+         own official docs. Every release APK built by this project's CI
+         had zero network permission until this file was added, which is
+         the real cause of every "SocketException: Failed host lookup"
+         style failure reported so far - it has nothing to do with DNS,
+         TLS, or server configuration. Placed here rather than in
+         src/main/ specifically so `flutter create` never overwrites it. -->
     <uses-permission android:name="android.permission.INTERNET"/>
 </manifest>
