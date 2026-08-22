@@ -29,7 +29,6 @@ class AppTheme {
       scaffoldBackgroundColor: AppColors.background,
       canvasColor: AppColors.background,
       splashFactory: InkRipple.splashFactory,
-      fontFamily: base.textTheme.bodyMedium?.fontFamily,
       textTheme: base.textTheme.apply(
         bodyColor: AppColors.textPrimary,
         displayColor: AppColors.textPrimary,

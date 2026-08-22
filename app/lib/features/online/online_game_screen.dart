@@ -46,7 +46,6 @@ class _OnlineGameScreenState extends ConsumerState<OnlineGameScreen> {
 
   final List<_QueuedStep> _queue = [];
   bool _animating = false;
-  int _lastSeenHistoryLen = 0;
   bool _gameOverDialogShown = false;
 
   OnlineConfig get _config => widget.config;
@@ -71,7 +70,6 @@ class _OnlineGameScreenState extends ConsumerState<OnlineGameScreen> {
             boardCursor = TavlaRules.applyMove(boardCursor, move);
           }
         }
-        _lastSeenHistoryLen = nextGame.history.length;
 
         if (nextGame.phase == GamePhase.awaitingRoll) {
           setState(() {
@@ -530,7 +528,6 @@ class _OnlineGameScreenState extends ConsumerState<OnlineGameScreen> {
                           setState(() {
                             _queue.clear();
                             _animating = false;
-                            _lastSeenHistoryLen = 0;
                             _gameOverDialogShown = false;
                             _selectedPoint = null;
                             _selectedIsBar = false;

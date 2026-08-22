@@ -57,8 +57,6 @@ class BoardWidget extends StatefulWidget {
 }
 
 class _BoardWidgetState extends State<BoardWidget> {
-  Object? _activeToken;
-
   @override
   Widget build(BuildContext context) {
     return AspectRatio(

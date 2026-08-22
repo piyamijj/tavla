@@ -57,8 +57,6 @@ class Board {
 
   /// The standard starting position of backgammon / tavla.
   factory Board.initial() {
-    final pts = List<Point>.filled(kPointCount, Point.empty, growable: false);
-
     Point w(int count) => Point(owner: PlayerColor.white, count: count);
     Point b(int count) => Point(owner: PlayerColor.black, count: count);
 
