@@ -144,6 +144,15 @@ class OnlineGameController extends StateNotifier<OnlineState> {
         }
       }),
       _socket.onConnectError.listen((_) {
+        // A single failed attempt is not fatal — automatic reconnection
+        // (see SocketService.connect) keeps retrying underneath, which
+        // matters most right after a Render free-tier instance wakes up
+        // from sleep (the first few attempts routinely fail while it
+        // boots). Only flip to the error screen once retries are fully
+        // exhausted, via onReconnectFailed below; until then just stay on
+        // the connecting spinner.
+      }),
+      _socket.onReconnectFailed.listen((_) {
         state = state.copyWith(
           status: ConnectionStatus.error,
           errorMessage: 'Sunucuya bağlanılamadı',

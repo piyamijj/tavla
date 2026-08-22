@@ -208,16 +208,11 @@ class _GameScreenState extends ConsumerState<GameScreen> {
 
     final player = state.currentPlayer;
 
-    if (state.board.barCount(player) > 0) {
-      final hasBarMoves = legalMoves.any((m) => m.isFromBar);
-      if (hasBarMoves) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text(AppStrings.mustEnterFromBar)),
-        );
-        return;
-      }
-    }
-
+    // Bar-entry mode is already active (the player tapped the bar first):
+    // resolve this tap as an entry-point attempt *before* the generic
+    // "you still have a checker on the bar" guard below, otherwise that
+    // guard would swallow every legitimate entry tap and the move could
+    // never be committed.
     if (_selectedIsBar) {
       final match = legalMoves.firstWhere(
         (m) => m.isFromBar && m.to == index,
@@ -229,6 +224,16 @@ class _GameScreenState extends ConsumerState<GameScreen> {
         setState(() => _selectedIsBar = false);
       }
       return;
+    }
+
+    if (state.board.barCount(player) > 0) {
+      final hasBarMoves = legalMoves.any((m) => m.isFromBar);
+      if (hasBarMoves) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text(AppStrings.mustEnterFromBar)),
+        );
+        return;
+      }
     }
 
     if (_selectedPoint == null) {
