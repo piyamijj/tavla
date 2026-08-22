@@ -2,9 +2,10 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// Default realtime server URL used until the player configures their own
-/// in Settings. Points at localhost, which only matters for local/dev
-/// testing; production players should set this to the deployed backend URL.
-const String kDefaultServerUrl = 'http://localhost:3000';
+/// in Settings. Points at the deployed Render backend by default; change
+/// this (or override it from the Settings screen) for local/dev testing
+/// against `http://localhost:3000`.
+const String kDefaultServerUrl = 'https://cyber-tavla-server.onrender.com';
 
 const String _kKeySound = 'settings.sound';
 const String _kKeyMusic = 'settings.music';
