@@ -34,6 +34,14 @@
  *   sync_state          { startingPlayer, events, opponentNickname, opponentConnected }
  *   rematch_requested   {}
  *   rematch_confirmed   { startingPlayer }
+ *   lobby_stats         { waitingRooms } — how many rooms are currently
+ *                        open and waiting for a second player. Sent once
+ *                        to each socket right after it connects, and
+ *                        re-broadcast to every connected socket whenever
+ *                        the count changes (room created/joined/left/
+ *                        disconnected/reconnected). Purely informational
+ *                        for a lobby-screen indicator — it does not
+ *                        affect matchmaking itself.
  */
 
 const rooms = require('./rooms');
@@ -54,6 +62,11 @@ function seatSocketId(room, color) {
   return room.socketIds[color];
 }
 
+/** Broadcasts the current waiting-room count to every connected socket. */
+function broadcastLobbyStats(io) {
+  io.emit('lobby_stats', { waitingRooms: rooms.waitingRoomCount() });
+}
+
 /**
  * Registers all Cyber Tavla protocol event handlers on a freshly connected
  * socket.
@@ -61,12 +74,18 @@ function seatSocketId(room, color) {
  * @param {import('socket.io').Socket} socket
  */
 function registerHandlers(io, socket) {
+  // Give the newly connected socket the current count right away, so a
+  // freshly opened lobby screen doesn't have to wait for some other
+  // player's action to see an initial number.
+  socket.emit('lobby_stats', { waitingRooms: rooms.waitingRoomCount() });
+
   socket.on('create_room', (payload) => {
     const nickname = sanitizeNickname(payload && payload.nickname);
     const room = rooms.createRoom(socket.id, nickname);
     socket.join(room.code);
 
     socket.emit('room_created', { roomCode: room.code, color: 'white' });
+    broadcastLobbyStats(io);
   });
 
   socket.on('join_room', (payload) => {
@@ -92,6 +111,7 @@ function registerHandlers(io, socket) {
 
     // Both seats are now filled: the match can begin.
     io.to(room.code).emit('game_start', { startingPlayer: room.startingPlayer });
+    broadcastLobbyStats(io);
   });
 
   socket.on('rejoin_room', (payload) => {
@@ -182,6 +202,7 @@ function registerHandlers(io, socket) {
     socket.leave(room.code);
     rooms.leaveRoom(room.code, color);
     socket.to(room.code).emit('opponent_left', {});
+    broadcastLobbyStats(io);
   });
 
   socket.on('disconnect', () => {
@@ -189,6 +210,11 @@ function registerHandlers(io, socket) {
     if (!found) return;
     const { room } = found;
     socket.to(room.code).emit('opponent_disconnected', {});
+    // A disconnect can turn a "waiting" room into a ghost (creator gone,
+    // nobody to join) or vice versa isn't possible here, but it can
+    // change the count either way depending on which seat/state this
+    // was, so just recompute and broadcast rather than special-case it.
+    broadcastLobbyStats(io);
   });
 }
 
@@ -216,6 +242,10 @@ function handleReattach(io, socket, payload, options) {
   const { room } = result;
   socket.join(room.code);
   socket.to(room.code).emit('opponent_reconnected', {});
+  // A reattach can bring a room back from "ghost" (creator was
+  // disconnected) to genuinely "waiting" again if the other seat is
+  // still empty, so the count needs recomputing here too.
+  broadcastLobbyStats(io);
 
   return { room, color };
 }

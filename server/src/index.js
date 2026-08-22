@@ -74,6 +74,7 @@ io.on('connection', (socket) => {
 
 setInterval(() => {
   rooms.sweepStaleRooms();
+  io.emit('lobby_stats', { waitingRooms: rooms.waitingRoomCount() });
 }, STALE_ROOM_SWEEP_INTERVAL_MS).unref();
 
 httpServer.listen(PORT, () => {

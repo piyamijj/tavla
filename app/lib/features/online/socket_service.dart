@@ -52,11 +52,26 @@ class SocketService {
   final _syncStateController = StreamController<SyncStatePayload>.broadcast();
   final _rematchRequestedController = StreamController<void>.broadcast();
   final _rematchConfirmedController = StreamController<RematchConfirmedPayload>.broadcast();
+  final _lobbyStatsController = StreamController<int>.broadcast();
   final _connectErrorController = StreamController<String>.broadcast();
   final _connectedController = StreamController<void>.broadcast();
   final _disconnectedController = StreamController<void>.broadcast();
-  final _reconnectFailedController = StreamController<void>.broadcast();
+  final _reconnectFailedController = StreamController<String?>.broadcast();
   final _reconnectAttemptController = StreamController<int>.broadcast();
+
+  /// The most recent raw error text seen from `connect_error`/`error`
+  /// (whatever the underlying Dart exception's `toString()` produced —
+  /// e.g. a `SocketException: Failed host lookup: ...` for DNS failures,
+  /// `HandshakeException` for TLS problems, `Connection refused`/`timeout`
+  /// for network-level issues). Kept around so [onReconnectFailed] can
+  /// hand the UI something more diagnostic than "could not connect" once
+  /// every retry has been exhausted — this is the only real diagnostic
+  /// signal available for a failure that can't be reproduced from a
+  /// server-side or curl-based check (see AWS_DEPLOY_GUIDE.md /
+  /// project history: a passing server-side check does not rule out a
+  /// device/network/carrier-level failure that never reaches the server
+  /// at all).
+  String? _lastErrorDetail;
 
   Stream<RoomCreatedPayload> get onRoomCreated => _roomCreatedController.stream;
   Stream<JoinedRoomPayload> get onJoinedRoom => _joinedRoomController.stream;
@@ -71,6 +86,12 @@ class SocketService {
   Stream<SyncStatePayload> get onSyncState => _syncStateController.stream;
   Stream<void> get onRematchRequested => _rematchRequestedController.stream;
   Stream<RematchConfirmedPayload> get onRematchConfirmed => _rematchConfirmedController.stream;
+
+  /// How many rooms are currently open and waiting for a second player,
+  /// server-wide. Sent once right after connecting and re-broadcast
+  /// whenever it changes — purely informational for a lobby-screen
+  /// indicator, not tied to this client's own room state.
+  Stream<int> get onLobbyStats => _lobbyStatsController.stream;
   Stream<String> get onConnectError => _connectErrorController.stream;
   Stream<void> get onConnected => _connectedController.stream;
   Stream<void> get onDisconnected => _disconnectedController.stream;
@@ -80,7 +101,9 @@ class SocketService {
   /// the signal the UI should actually treat as "give up and show an
   /// error", as opposed to the transient `onConnectError` events fired on
   /// each individual failed attempt while retries are still in flight.
-  Stream<void> get onReconnectFailed => _reconnectFailedController.stream;
+  /// Carries the last raw error text seen (see [_lastErrorDetail]), or
+  /// `null` if somehow none was ever captured.
+  Stream<String?> get onReconnectFailed => _reconnectFailedController.stream;
 
   /// Fires before each automatic retry (attempt number, 1-based) — used by
   /// the UI to swap the generic "connecting..." spinner text for a
@@ -131,11 +154,24 @@ class SocketService {
           .build(),
     );
 
-    socket.onConnect((_) => _connectedController.add(null));
+    socket.onConnect((_) {
+      _lastErrorDetail = null;
+      _connectedController.add(null);
+    });
     socket.onDisconnect((_) => _disconnectedController.add(null));
-    socket.onConnectError((data) => _connectErrorController.add(data?.toString() ?? 'connect_error'));
-    socket.onError((data) => _connectErrorController.add(data?.toString() ?? 'error'));
-    socket.onReconnectFailed((_) => _reconnectFailedController.add(null));
+    socket.onConnectError((data) {
+      _lastErrorDetail = data?.toString() ?? 'connect_error';
+      // ignore: avoid_print
+      print('[SocketService] connect_error: $_lastErrorDetail');
+      _connectErrorController.add(_lastErrorDetail!);
+    });
+    socket.onError((data) {
+      _lastErrorDetail = data?.toString() ?? 'error';
+      // ignore: avoid_print
+      print('[SocketService] socket error: $_lastErrorDetail');
+      _connectErrorController.add(_lastErrorDetail!);
+    });
+    socket.onReconnectFailed((_) => _reconnectFailedController.add(_lastErrorDetail));
     socket.onReconnectAttempt((data) {
       final attempt = data is int ? data : int.tryParse(data?.toString() ?? '') ?? 0;
       _reconnectAttemptController.add(attempt);
@@ -172,6 +208,11 @@ class SocketService {
     socket.on('rematch_requested', (_) => _rematchRequestedController.add(null));
     socket.on('rematch_confirmed', (data) {
       _rematchConfirmedController.add(RematchConfirmedPayload.fromJson(_asMap(data)));
+    });
+    socket.on('lobby_stats', (data) {
+      final map = _asMap(data);
+      final count = map['waitingRooms'];
+      _lobbyStatsController.add(count is int ? count : int.tryParse(count?.toString() ?? '') ?? 0);
     });
 
     _socket = socket;
@@ -236,9 +277,11 @@ class SocketService {
     _syncStateController.close();
     _rematchRequestedController.close();
     _rematchConfirmedController.close();
+    _lobbyStatsController.close();
     _connectErrorController.close();
     _connectedController.close();
     _disconnectedController.close();
     _reconnectFailedController.close();
+    _reconnectAttemptController.close();
   }
 }

@@ -243,7 +243,7 @@ class _MultiplayerLobbyScreenState extends ConsumerState<MultiplayerLobbyScreen>
         );
 
       case ConnectionStatus.connected:
-        return _buildRoomChoice(controller);
+        return _buildRoomChoice(state, controller);
 
       case ConnectionStatus.waitingForOpponent:
         return _buildWaitingRoom(state, controller);
@@ -259,13 +259,17 @@ class _MultiplayerLobbyScreenState extends ConsumerState<MultiplayerLobbyScreen>
     }
   }
 
-  Widget _buildRoomChoice(OnlineGameController controller) {
+  Widget _buildRoomChoice(OnlineState state, OnlineGameController controller) {
     return GlowPanel(
       glowColor: AppColors.neonMagenta,
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          if (state.waitingRooms != null) ...[
+            _WaitingPlayersBadge(waitingRooms: state.waitingRooms!),
+            const SizedBox(height: 14),
+          ],
           NeonButton(
             label: AppStrings.createRoom,
             icon: Icons.add_circle_outline_rounded,
@@ -371,6 +375,46 @@ class _MultiplayerLobbyScreenState extends ConsumerState<MultiplayerLobbyScreen>
               controller.leaveRoom();
             },
             child: const Text(AppStrings.leaveRoom, style: TextStyle(color: AppColors.neonRed)),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Small pill showing how many rooms are currently open and waiting for a
+/// second player, server-wide — gives the lobby screen real visibility
+/// into current activity instead of a silent connect-then-match flow.
+class _WaitingPlayersBadge extends StatelessWidget {
+  const _WaitingPlayersBadge({required this.waitingRooms});
+
+  final int waitingRooms;
+
+  @override
+  Widget build(BuildContext context) {
+    final label = waitingRooms > 0
+        ? '$waitingRooms ${AppStrings.playersWaitingSuffix}'
+        : AppStrings.noOneWaiting;
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: AppColors.neonCyan.withOpacity(0.08),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: AppColors.neonCyan.withOpacity(0.4)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            waitingRooms > 0 ? Icons.wifi_tethering_rounded : Icons.wifi_tethering_off_rounded,
+            color: AppColors.neonCyan,
+            size: 16,
+          ),
+          const SizedBox(width: 8),
+          Text(
+            label,
+            style: const TextStyle(color: AppColors.neonCyan, fontSize: 12.5, fontWeight: FontWeight.w600),
           ),
         ],
       ),

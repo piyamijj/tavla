@@ -66,6 +66,8 @@ class AppStrings {
   static const String connectionLost = 'Bağlantı koptu, yeniden bağlanılıyor...';
   static const String reconnected = 'Yeniden bağlanıldı';
   static const String waitingForOpponent = 'Rakip bekleniyor...';
+  static const String playersWaitingSuffix = 'oyuncu eşleşme bekliyor';
+  static const String noOneWaiting = 'Şu an bekleyen oyuncu yok';
   static const String opponentJoined = 'Rakip odaya katıldı';
   static const String opponentLeft = 'Rakip odadan ayrıldı';
   static const String opponentDisconnected = 'Rakibin bağlantısı koptu, bekleniyor...';

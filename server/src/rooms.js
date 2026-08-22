@@ -246,6 +246,23 @@ function roomCount() {
   return rooms.size;
 }
 
+/**
+ * Counts rooms that are genuinely open for a second player to join right
+ * now: created, with the white seat still connected, and nobody seated
+ * in black yet. Deliberately excludes rooms whose creator has since
+ * disconnected (kept around only for {@link reattachSeat} reconnection) —
+ * those aren't really "waiting for a match", just a ghost session, and
+ * counting them would make the lobby indicator overstate real activity.
+ * @returns {number}
+ */
+function waitingRoomCount() {
+  let count = 0;
+  for (const room of rooms.values()) {
+    if (!room.socketIds.black && room.connected.white) count++;
+  }
+  return count;
+}
+
 module.exports = {
   createRoom,
   getRoom,
@@ -260,4 +277,5 @@ module.exports = {
   requestRematch,
   sweepStaleRooms,
   roomCount,
+  waitingRoomCount,
 };

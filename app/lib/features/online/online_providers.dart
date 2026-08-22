@@ -53,6 +53,11 @@ class OnlineState {
   /// with no explanation for up to ~90 seconds.
   final String? connectingHint;
 
+  /// How many rooms are currently open server-wide, waiting for a second
+  /// player — `null` until the first `lobby_stats` event arrives just
+  /// after connecting. Purely informational (see [SocketService.onLobbyStats]).
+  final int? waitingRooms;
+
   const OnlineState({
     required this.status,
     this.roomCode,
@@ -64,6 +69,7 @@ class OnlineState {
     this.rematchRequestedByMe = false,
     this.rematchOfferedByOpponent = false,
     this.connectingHint,
+    this.waitingRooms,
   });
 
   factory OnlineState.initial() => const OnlineState(status: ConnectionStatus.disconnected);
@@ -81,6 +87,7 @@ class OnlineState {
     bool? rematchOfferedByOpponent,
     String? connectingHint,
     bool clearConnectingHint = false,
+    int? waitingRooms,
   }) {
     return OnlineState(
       status: status ?? this.status,
@@ -93,6 +100,7 @@ class OnlineState {
       rematchRequestedByMe: rematchRequestedByMe ?? this.rematchRequestedByMe,
       rematchOfferedByOpponent: rematchOfferedByOpponent ?? this.rematchOfferedByOpponent,
       connectingHint: clearConnectingHint ? null : (connectingHint ?? this.connectingHint),
+      waitingRooms: waitingRooms ?? this.waitingRooms,
     );
   }
 }
@@ -168,11 +176,18 @@ class OnlineGameController extends StateNotifier<OnlineState> {
         // exhausted, via onReconnectFailed below; until then just stay on
         // the connecting spinner.
       }),
-      _socket.onReconnectFailed.listen((_) {
-        state = state.copyWith(
-          status: ConnectionStatus.error,
-          errorMessage: 'Sunucuya bağlanılamadı',
-        );
+      _socket.onReconnectFailed.listen((detail) {
+        // Append the raw underlying error (DNS failure, TLS/handshake
+        // error, connection refused, timeout, etc.) so a failure that
+        // can't be reproduced from a server-side/curl check — e.g. a
+        // carrier or device-network issue that never reaches the server
+        // at all — is at least visible to whoever is looking at the
+        // screen, instead of a single generic message that could mean
+        // anything.
+        final message = (detail == null || detail.isEmpty)
+            ? 'Sunucuya bağlanılamadı'
+            : 'Sunucuya bağlanılamadı\n(detay: $detail)';
+        state = state.copyWith(status: ConnectionStatus.error, errorMessage: message);
       }),
       _socket.onReconnectAttempt.listen((_) {
         // The first attempt never got a callback here — this only fires
@@ -264,6 +279,9 @@ class OnlineGameController extends StateNotifier<OnlineState> {
           rematchRequestedByMe: false,
           rematchOfferedByOpponent: false,
         );
+      }),
+      _socket.onLobbyStats.listen((count) {
+        state = state.copyWith(waitingRooms: count);
       }),
     ]);
   }
