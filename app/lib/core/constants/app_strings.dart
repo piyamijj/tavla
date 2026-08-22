@@ -68,6 +68,9 @@ class AppStrings {
   static const String waitingForOpponent = 'Rakip bekleniyor...';
   static const String playersWaitingSuffix = 'oyuncu eşleşme bekliyor';
   static const String noOneWaiting = 'Şu an bekleyen oyuncu yok';
+  static const String idlePlayersTitle = 'Eşleşmeye hazır oyuncular';
+  static const String noIdlePlayers = 'Şu an boşta oyuncu yok';
+  static const String challengeButton = 'Meydan Oku';
   static const String opponentJoined = 'Rakip odaya katıldı';
   static const String opponentLeft = 'Rakip odadan ayrıldı';
   static const String opponentDisconnected = 'Rakibin bağlantısı koptu, bekleniyor...';

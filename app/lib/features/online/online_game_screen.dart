@@ -31,9 +31,7 @@ class _QueuedStep {
 /// [GameController]. Adds connection-status banners (opponent
 /// disconnected/reconnected) and a rematch handshake at game end.
 class OnlineGameScreen extends ConsumerStatefulWidget {
-  final OnlineConfig config;
-
-  const OnlineGameScreen({super.key, required this.config});
+  const OnlineGameScreen({super.key});
 
   @override
   ConsumerState<OnlineGameScreen> createState() => _OnlineGameScreenState();
@@ -48,15 +46,13 @@ class _OnlineGameScreenState extends ConsumerState<OnlineGameScreen> {
   bool _animating = false;
   bool _gameOverDialogShown = false;
 
-  OnlineConfig get _config => widget.config;
-
   @override
   Widget build(BuildContext context) {
-    final onlineState = ref.watch(onlineGameControllerProvider(_config));
-    final controller = ref.read(onlineGameControllerProvider(_config).notifier);
+    final onlineState = ref.watch(onlineGameControllerProvider);
+    final controller = ref.read(onlineGameControllerProvider.notifier);
     final state = onlineState.game;
 
-    ref.listen<OnlineState>(onlineGameControllerProvider(_config), (previous, next) {
+    ref.listen<OnlineState>(onlineGameControllerProvider, (previous, next) {
       final prevGame = previous?.game;
       final nextGame = next.game;
 
@@ -500,7 +496,7 @@ class _OnlineGameScreenState extends ConsumerState<OnlineGameScreen> {
       builder: (dialogContext) {
         return Consumer(
           builder: (dialogContext, ref, _) {
-            final liveState = ref.watch(onlineGameControllerProvider(_config));
+            final liveState = ref.watch(onlineGameControllerProvider);
             return AlertDialog(
               title: Text(title, style: TextStyle(color: color, fontWeight: FontWeight.w800)),
               content: Text(

@@ -163,3 +163,21 @@ class RematchConfirmedPayload {
         startingPlayer: PlayerColor.fromWire(json['startingPlayer'] as String),
       );
 }
+
+/// One other player currently idle in the multiplayer lobby (connected,
+/// not in a match) and open to being challenged directly — see
+/// `challenge_player` in the server's wire protocol. [id] is that
+/// player's current socket id, which is only valid for as long as they
+/// stay connected; it is never shown to the user, only used internally to
+/// address a `challenge_player` request.
+class LobbyPlayer {
+  final String id;
+  final String nickname;
+
+  const LobbyPlayer({required this.id, required this.nickname});
+
+  factory LobbyPlayer.fromJson(Map<String, dynamic> json) => LobbyPlayer(
+        id: json['id'] as String,
+        nickname: json['nickname'] as String? ?? 'Oyuncu',
+      );
+}

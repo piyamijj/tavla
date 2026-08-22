@@ -8,12 +8,18 @@ import '../../core/widgets/glow_panel.dart';
 import '../../core/widgets/neon_button.dart';
 import '../settings/settings_providers.dart';
 import 'online_game_screen.dart';
+import 'online_models.dart';
 import 'online_providers.dart';
 
-/// Multiplayer entry point: collects a nickname, then either creates a new
-/// room (sharing the resulting code with the opponent) or joins one by
-/// code. Once the server reports `game_start`, this screen hands off to
-/// [OnlineGameScreen].
+/// Multiplayer lobby: shows who else is currently idle and challengeable
+/// (tap a name to start an instant match), or falls back to the manual
+/// create-a-room/share-the-code/join-by-code flow. The underlying
+/// connection (see [onlineGameControllerProvider]) is opened in the
+/// background as soon as the app launches — by the time this screen
+/// opens it should already be connected, so this screen's only job is to
+/// mark the player idle/challengeable ([OnlineGameController.enterLobby])
+/// and render whatever [ConnectionStatus] it finds. Once the server
+/// reports `game_start`, this screen hands off to [OnlineGameScreen].
 class MultiplayerLobbyScreen extends ConsumerStatefulWidget {
   const MultiplayerLobbyScreen({super.key});
 
@@ -24,7 +30,6 @@ class MultiplayerLobbyScreen extends ConsumerStatefulWidget {
 class _MultiplayerLobbyScreenState extends ConsumerState<MultiplayerLobbyScreen> {
   final _nicknameController = TextEditingController();
   final _roomCodeController = TextEditingController();
-  OnlineConfig? _activeConfig;
   bool _pushedGameScreen = false;
 
   @override
@@ -34,10 +39,20 @@ class _MultiplayerLobbyScreenState extends ConsumerState<MultiplayerLobbyScreen>
     _nicknameController.text = settings.playerName.isNotEmpty
         ? settings.playerName
         : 'Oyuncu${100 + DateTime.now().millisecond % 900}';
+
+    final controller = ref.read(onlineGameControllerProvider.notifier);
+    controller.setNickname(_nicknameController.text);
+    controller.enterLobby();
   }
 
   @override
   void dispose() {
+    // Only reachable when the player actually navigates away from the
+    // multiplayer feature entirely (pushing OnlineGameScreen on top of
+    // this one keeps it mounted underneath, so this does NOT fire just
+    // from starting a match) — stop showing up in others' challenge
+    // lists.
+    ref.read(onlineGameControllerProvider.notifier).leaveLobby();
     _nicknameController.dispose();
     _roomCodeController.dispose();
     super.dispose();
@@ -47,36 +62,24 @@ class _MultiplayerLobbyScreenState extends ConsumerState<MultiplayerLobbyScreen>
       ? 'Oyuncu'
       : _nicknameController.text.trim();
 
-  void _ensureConnected() {
-    final settings = ref.read(settingsProvider);
-    final config = OnlineConfig(serverUrl: settings.serverUrl, nickname: _nickname);
-    if (_activeConfig == null || _activeConfig != config) {
-      setState(() {
-        _activeConfig = config;
-        _pushedGameScreen = false;
-      });
-    }
+  void _applyNickname() {
+    ref.read(onlineGameControllerProvider.notifier)
+      ..setNickname(_nickname)
+      ..enterLobby();
   }
 
   @override
   Widget build(BuildContext context) {
-    final settings = ref.watch(settingsProvider);
+    final onlineState = ref.watch(onlineGameControllerProvider);
+    final controller = ref.read(onlineGameControllerProvider.notifier);
 
-    if (_activeConfig == null) {
-      return _buildEntryScaffold(settings, connecting: false);
-    }
-
-    final config = _activeConfig!;
-    final onlineState = ref.watch(onlineGameControllerProvider(config));
-    final controller = ref.read(onlineGameControllerProvider(config).notifier);
-
-    ref.listen<OnlineState>(onlineGameControllerProvider(config), (previous, next) {
+    ref.listen<OnlineState>(onlineGameControllerProvider, (previous, next) {
       if (next.status == ConnectionStatus.inMatch && !_pushedGameScreen) {
         _pushedGameScreen = true;
         Navigator.of(context)
             .push(
               MaterialPageRoute(
-                builder: (_) => OnlineGameScreen(config: config),
+                builder: (_) => const OnlineGameScreen(),
               ),
             )
             .then((_) {
@@ -87,72 +90,6 @@ class _MultiplayerLobbyScreenState extends ConsumerState<MultiplayerLobbyScreen>
     });
 
     return _buildLobbyScaffold(context, onlineState, controller);
-  }
-
-  Widget _buildEntryScaffold(AppSettings settings, {required bool connecting}) {
-    return Scaffold(
-      body: CyberBackground(
-        child: SafeArea(
-          child: Column(
-            children: [
-              AppBar(
-                title: const Text(AppStrings.multiplayerTitle),
-                backgroundColor: Colors.transparent,
-                elevation: 0,
-              ),
-              Expanded(
-                child: Center(
-                  child: SingleChildScrollView(
-                    padding: const EdgeInsets.symmetric(horizontal: 24),
-                    child: ConstrainedBox(
-                      constraints: const BoxConstraints(maxWidth: 420),
-                      child: GlowPanel(
-                        glowColor: AppColors.neonMagenta,
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            const Text(
-                              AppStrings.yourNickname,
-                              style: TextStyle(
-                                color: AppColors.textPrimary,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                            const SizedBox(height: 10),
-                            TextField(
-                              controller: _nicknameController,
-                              style: const TextStyle(color: AppColors.textPrimary),
-                              decoration: const InputDecoration(
-                                hintText: AppStrings.nicknameHint,
-                                prefixIcon: Icon(Icons.badge_outlined),
-                              ),
-                              maxLength: 16,
-                            ),
-                            const SizedBox(height: 8),
-                            Text(
-                              '${AppStrings.settingServerUrl}: ${settings.serverUrl}',
-                              style: const TextStyle(color: AppColors.textMuted, fontSize: 11.5),
-                            ),
-                            const SizedBox(height: 20),
-                            NeonButton(
-                              label: AppStrings.createRoom,
-                              icon: Icons.add_circle_outline_rounded,
-                              color: AppColors.neonCyan,
-                              onPressed: _ensureConnected,
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
   }
 
   Widget _buildLobbyScaffold(
@@ -172,8 +109,10 @@ class _MultiplayerLobbyScreenState extends ConsumerState<MultiplayerLobbyScreen>
                 leading: IconButton(
                   icon: const Icon(Icons.arrow_back_ios_new_rounded),
                   onPressed: () {
-                    controller.leaveRoom();
-                    setState(() => _activeConfig = null);
+                    if (state.status == ConnectionStatus.waitingForOpponent) {
+                      controller.leaveRoom();
+                    }
+                    Navigator.of(context).pop();
                   },
                 ),
               ),
@@ -236,7 +175,7 @@ class _MultiplayerLobbyScreenState extends ConsumerState<MultiplayerLobbyScreen>
               NeonButton(
                 label: AppStrings.retry,
                 color: AppColors.neonRed,
-                onPressed: () => setState(() => _activeConfig = null),
+                onPressed: controller.retryConnect,
               ),
             ],
           ),
@@ -260,56 +199,97 @@ class _MultiplayerLobbyScreenState extends ConsumerState<MultiplayerLobbyScreen>
   }
 
   Widget _buildRoomChoice(OnlineState state, OnlineGameController controller) {
-    return GlowPanel(
-      glowColor: AppColors.neonMagenta,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          if (state.waitingRooms != null) ...[
-            _WaitingPlayersBadge(waitingRooms: state.waitingRooms!),
-            const SizedBox(height: 14),
-          ],
-          NeonButton(
-            label: AppStrings.createRoom,
-            icon: Icons.add_circle_outline_rounded,
-            color: AppColors.neonCyan,
-            onPressed: controller.createRoom,
-          ),
-          const SizedBox(height: 18),
-          const Divider(),
-          const SizedBox(height: 10),
-          const Text(
-            AppStrings.enterRoomCode,
-            style: TextStyle(color: AppColors.textPrimary, fontWeight: FontWeight.w700),
-          ),
-          const SizedBox(height: 10),
-          TextField(
-            controller: _roomCodeController,
-            style: const TextStyle(
-              color: AppColors.textPrimary,
-              letterSpacing: 4,
-              fontWeight: FontWeight.w700,
-            ),
-            textCapitalization: TextCapitalization.characters,
-            inputFormatters: [
-              FilteringTextInputFormatter.allow(RegExp('[A-Za-z0-9]')),
-              LengthLimitingTextInputFormatter(6),
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        GlowPanel(
+          glowColor: AppColors.neonCyan,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text(
+                AppStrings.yourNickname,
+                style: TextStyle(color: AppColors.textPrimary, fontWeight: FontWeight.w700),
+              ),
+              const SizedBox(height: 10),
+              TextField(
+                controller: _nicknameController,
+                style: const TextStyle(color: AppColors.textPrimary),
+                decoration: const InputDecoration(
+                  hintText: AppStrings.nicknameHint,
+                  prefixIcon: Icon(Icons.badge_outlined),
+                ),
+                maxLength: 16,
+                onSubmitted: (_) => _applyNickname(),
+                onEditingComplete: _applyNickname,
+              ),
             ],
-            decoration: const InputDecoration(
-              hintText: AppStrings.roomCodeHint,
-              prefixIcon: Icon(Icons.tag_rounded),
-            ),
           ),
-          const SizedBox(height: 14),
-          NeonButton(
-            label: AppStrings.joinRoom,
-            icon: Icons.login_rounded,
-            color: AppColors.neonMagenta,
-            onPressed: () => controller.joinRoom(_roomCodeController.text),
+        ),
+        const SizedBox(height: 16),
+        GlowPanel(
+          glowColor: AppColors.neonMagenta,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (state.waitingRooms != null) ...[
+                _WaitingPlayersBadge(waitingRooms: state.waitingRooms!),
+                const SizedBox(height: 14),
+              ],
+              Text(
+                AppStrings.idlePlayersTitle,
+                style: const TextStyle(color: AppColors.textPrimary, fontWeight: FontWeight.w700),
+              ),
+              const SizedBox(height: 10),
+              _IdlePlayersList(
+                players: state.idlePlayers,
+                onChallenge: controller.challengePlayer,
+              ),
+              const SizedBox(height: 18),
+              NeonButton(
+                label: AppStrings.createRoom,
+                icon: Icons.add_circle_outline_rounded,
+                color: AppColors.neonCyan,
+                onPressed: controller.createRoom,
+              ),
+              const SizedBox(height: 18),
+              const Divider(),
+              const SizedBox(height: 10),
+              const Text(
+                AppStrings.enterRoomCode,
+                style: TextStyle(color: AppColors.textPrimary, fontWeight: FontWeight.w700),
+              ),
+              const SizedBox(height: 10),
+              TextField(
+                controller: _roomCodeController,
+                style: const TextStyle(
+                  color: AppColors.textPrimary,
+                  letterSpacing: 4,
+                  fontWeight: FontWeight.w700,
+                ),
+                textCapitalization: TextCapitalization.characters,
+                inputFormatters: [
+                  FilteringTextInputFormatter.allow(RegExp('[A-Za-z0-9]')),
+                  LengthLimitingTextInputFormatter(6),
+                ],
+                decoration: const InputDecoration(
+                  hintText: AppStrings.roomCodeHint,
+                  prefixIcon: Icon(Icons.tag_rounded),
+                ),
+              ),
+              const SizedBox(height: 14),
+              NeonButton(
+                label: AppStrings.joinRoom,
+                icon: Icons.login_rounded,
+                color: AppColors.neonMagenta,
+                onPressed: () => controller.joinRoom(_roomCodeController.text),
+              ),
+            ],
           ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 
@@ -418,6 +398,74 @@ class _WaitingPlayersBadge extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+/// The actual list of other idle players the user can tap to challenge
+/// directly, instead of the manual create/share-code/join dance — each
+/// row is a nickname plus a one-tap "Meydan Oku" (Challenge) action.
+class _IdlePlayersList extends StatelessWidget {
+  const _IdlePlayersList({required this.players, required this.onChallenge});
+
+  final List<LobbyPlayer> players;
+  final void Function(LobbyPlayer player) onChallenge;
+
+  @override
+  Widget build(BuildContext context) {
+    if (players.isEmpty) {
+      return Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(vertical: 14),
+        alignment: Alignment.center,
+        decoration: BoxDecoration(
+          color: AppColors.surfaceVariant.withOpacity(0.5),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: const Text(
+          AppStrings.noIdlePlayers,
+          style: TextStyle(color: AppColors.textMuted, fontSize: 12.5),
+        ),
+      );
+    }
+
+    return Column(
+      children: [
+        for (final player in players) ...[
+          Container(
+            margin: const EdgeInsets.only(bottom: 8),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            decoration: BoxDecoration(
+              color: AppColors.surfaceVariant.withOpacity(0.6),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: AppColors.neonGreen.withOpacity(0.35)),
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.circle, color: AppColors.neonGreen, size: 9),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    player.nickname,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: AppColors.textPrimary,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+                TextButton(
+                  onPressed: () => onChallenge(player),
+                  child: const Text(
+                    AppStrings.challengeButton,
+                    style: TextStyle(color: AppColors.neonMagenta, fontWeight: FontWeight.w700),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ],
     );
   }
 }

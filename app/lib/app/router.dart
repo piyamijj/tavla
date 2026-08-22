@@ -6,10 +6,10 @@ import '../features/home/home_screen.dart';
 ///
 /// Only routes with no constructor arguments (or ones that can be safely
 /// defaulted) are registered by name here. Feature screens that need rich,
-/// typed configuration — the game screen (`GameConfig`), the online game
-/// screen (`OnlineConfig`), the bot setup flow, etc. — are pushed directly
-/// via `MaterialPageRoute` from within the screen that creates their
-/// configuration, so that configuration stays strongly typed instead of
+/// typed configuration — the local game screen (`GameConfig`), the bot
+/// setup flow, etc. — are pushed directly via `MaterialPageRoute` from
+/// within the screen that creates their configuration, so that
+/// configuration stays strongly typed instead of
 /// being packed into a loosely-typed route arguments map.
 class AppRoutes {
   const AppRoutes._();

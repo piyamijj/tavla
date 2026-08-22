@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../shared/game_state.dart';
 import '../../shared/moves.dart';
 import '../../shared/player.dart';
+import '../settings/settings_providers.dart';
 import 'online_models.dart';
 import 'socket_service.dart';
 
@@ -58,6 +59,12 @@ class OnlineState {
   /// after connecting. Purely informational (see [SocketService.onLobbyStats]).
   final int? waitingRooms;
 
+  /// Other players currently idle in the lobby and available to
+  /// [OnlineGameController.challengePlayer] directly — empty until the
+  /// first `lobby_players` event arrives, which only happens once this
+  /// socket has itself called [OnlineGameController.enterLobby].
+  final List<LobbyPlayer> idlePlayers;
+
   const OnlineState({
     required this.status,
     this.roomCode,
@@ -70,6 +77,7 @@ class OnlineState {
     this.rematchOfferedByOpponent = false,
     this.connectingHint,
     this.waitingRooms,
+    this.idlePlayers = const [],
   });
 
   factory OnlineState.initial() => const OnlineState(status: ConnectionStatus.disconnected);
@@ -88,6 +96,7 @@ class OnlineState {
     String? connectingHint,
     bool clearConnectingHint = false,
     int? waitingRooms,
+    List<LobbyPlayer>? idlePlayers,
   }) {
     return OnlineState(
       status: status ?? this.status,
@@ -101,32 +110,30 @@ class OnlineState {
       rematchOfferedByOpponent: rematchOfferedByOpponent ?? this.rematchOfferedByOpponent,
       connectingHint: clearConnectingHint ? null : (connectingHint ?? this.connectingHint),
       waitingRooms: waitingRooms ?? this.waitingRooms,
+      idlePlayers: idlePlayers ?? this.idlePlayers,
     );
   }
 }
 
-/// Identifies one online session's connection parameters. Two configs with
-/// the same values are treated as the same provider instance by Riverpod's
-/// family caching.
-class OnlineConfig {
-  final String serverUrl;
-  final String nickname;
-
-  const OnlineConfig({required this.serverUrl, required this.nickname});
-
-  @override
-  bool operator ==(Object other) =>
-      other is OnlineConfig && other.serverUrl == serverUrl && other.nickname == nickname;
-
-  @override
-  int get hashCode => Object.hash(serverUrl, nickname);
-}
-
-/// Drives the multiplayer lobby + in-match experience: owns a
-/// [SocketService] connection, turns raw protocol events into a local
-/// [GameState] mirror (using `applyRoll` / `applyMove` so both peers derive
-/// identical state from the same authoritative event stream), and exposes
-/// room/rematch actions for the UI.
+/// Drives the multiplayer lobby + in-match experience for the WHOLE app
+/// lifetime: owns a single [SocketService] connection that is opened as
+/// soon as this provider is first read (see `main.dart`, which reads it
+/// eagerly at startup so the connection is already warm by the time the
+/// player opens the multiplayer screen — no more connect-and-wait cycle
+/// on entry), turns raw protocol events into a local [GameState] mirror
+/// (using `applyRoll` / `applyMove` so both peers derive identical state
+/// from the same authoritative event stream), and exposes room/rematch/
+/// lobby actions for the UI.
+///
+/// Deliberately NOT a `family` keyed by server URL + nickname (an earlier
+/// version was): nickname is just UI text the player can retype at any
+/// time, and keying a provider family by it would spin up a brand new
+/// socket connection — and silently orphan the old one, since this
+/// provider is not `autoDispose` — every time they edited the field.
+/// Nickname is tracked as a plain mutable field instead ([_nickname],
+/// set via [setNickname]) and the connection itself only depends on
+/// [AppSettings.serverUrl], which this controller watches and reconnects
+/// to if it ever changes (see the `ref.listen` in the constructor).
 ///
 /// Move validation itself still happens locally via the shared Dart engine
 /// (the mover only ever sends moves already confirmed legal by
@@ -136,26 +143,49 @@ class OnlineConfig {
 /// server-side for independent validation is tracked as future work (see
 /// README).
 class OnlineGameController extends StateNotifier<OnlineState> {
-  final OnlineConfig config;
+  final Ref _ref;
   final SocketService _socket = SocketService();
   final List<StreamSubscription<dynamic>> _subs = [];
 
-  OnlineGameController(this.config) : super(OnlineState.initial()) {
-    _connect();
+  String _nickname = 'Oyuncu';
+  String? _connectedServerUrl;
+
+  /// Whether the player has called [enterLobby] and not yet [leaveLobby]
+  /// (or started a match) — tracked so a reconnect (new socket id, so the
+  /// server's idle registry no longer has us) can transparently resend
+  /// `enter_lobby` instead of the player just silently vanishing from
+  /// everyone else's challenge list.
+  bool _wantsLobbyPresence = false;
+
+  OnlineGameController(this._ref) : super(OnlineState.initial()) {
+    _connect(_ref.read(settingsProvider).serverUrl);
+
+    _ref.listen<AppSettings>(settingsProvider, (previous, next) {
+      if (next.serverUrl != _connectedServerUrl) {
+        _connect(next.serverUrl);
+      }
+    });
   }
 
-  void _connect() {
+  void _connect(String serverUrl) {
+    _connectedServerUrl = serverUrl;
     state = state.copyWith(
       status: ConnectionStatus.connecting,
       clearError: true,
       clearConnectingHint: true,
     );
-    _socket.connect(config.serverUrl);
+    _socket.connect(serverUrl);
+
+    for (final sub in _subs) {
+      sub.cancel();
+    }
+    _subs.clear();
 
     _subs.addAll([
       _socket.onConnected.listen((_) {
         if (state.roomCode == null || state.myColor == null) {
           state = state.copyWith(status: ConnectionStatus.connected, clearConnectingHint: true);
+          if (_wantsLobbyPresence) _socket.enterLobby(_nickname);
         } else {
           // Reconnected mid-match (Socket.io issues a new socket id on
           // every reconnect): ask the server to re-attach this socket to
@@ -163,7 +193,7 @@ class OnlineGameController extends StateNotifier<OnlineState> {
           _socket.requestSync(
             state.roomCode!,
             color: state.myColor!.wireValue,
-            nickname: config.nickname,
+            nickname: _nickname,
           );
         }
       }),
@@ -283,15 +313,63 @@ class OnlineGameController extends StateNotifier<OnlineState> {
       _socket.onLobbyStats.listen((count) {
         state = state.copyWith(waitingRooms: count);
       }),
+      _socket.onLobbyPlayers.listen((players) {
+        state = state.copyWith(idlePlayers: players);
+      }),
     ]);
   }
 
-  void createRoom() => _socket.createRoom(config.nickname);
+  /// Updates the nickname used for every subsequent lobby/room action
+  /// (create/join/challenge/enterLobby). Does not by itself notify the
+  /// server — call [enterLobby] again if already idle and the visible
+  /// name should update immediately.
+  void setNickname(String nickname) {
+    final trimmed = nickname.trim();
+    _nickname = trimmed.isEmpty ? 'Oyuncu' : trimmed;
+  }
+
+  /// Marks the player idle/challengeable in the lobby under the current
+  /// nickname (see [setNickname]) — called when the multiplayer lobby
+  /// screen opens. Safe to call before the socket has connected.
+  void enterLobby() {
+    _wantsLobbyPresence = true;
+    _socket.enterLobby(_nickname);
+  }
+
+  /// Opposite of [enterLobby] — called when the lobby screen closes
+  /// without starting a match.
+  void leaveLobby() {
+    _wantsLobbyPresence = false;
+    _socket.leaveLobby();
+    state = state.copyWith(idlePlayers: const []);
+  }
+
+  /// Directly challenges [player] to a match, skipping the manual
+  /// create/share-code/join flow. If they're no longer idle by the time
+  /// this arrives, the server replies with a `room_error`, handled the
+  /// same way any other room error is (see the `onRoomError` listener
+  /// above).
+  void challengePlayer(LobbyPlayer player) {
+    _wantsLobbyPresence = false;
+    _socket.challengePlayer(player.id);
+  }
+
+  /// Forces a fresh connection attempt against the current server URL —
+  /// used by the error screen's retry button. A no-op guard isn't needed
+  /// here since [_connect] already cancels and replaces every previous
+  /// subscription itself.
+  void retryConnect() => _connect(_ref.read(settingsProvider).serverUrl);
+
+  void createRoom() {
+    _wantsLobbyPresence = false;
+    _socket.createRoom(_nickname);
+  }
 
   void joinRoom(String roomCode) {
     final normalized = roomCode.trim().toUpperCase();
     if (normalized.isEmpty) return;
-    _socket.joinRoom(normalized, config.nickname);
+    _wantsLobbyPresence = false;
+    _socket.joinRoom(normalized, _nickname);
   }
 
   /// Requests the server roll the dice for the current turn. Both peers —
@@ -324,10 +402,15 @@ class OnlineGameController extends StateNotifier<OnlineState> {
     state = state.copyWith(rematchRequestedByMe: true);
   }
 
+  /// Leaves the current room and returns to the lobby, immediately
+  /// re-entering it as idle/challengeable — matches the natural
+  /// expectation that finishing or abandoning a match puts you back
+  /// among the players others can challenge, not into limbo.
   void leaveRoom() {
     final room = state.roomCode;
     if (room != null) _socket.leaveRoom(room);
     state = OnlineState.initial().copyWith(status: ConnectionStatus.connected);
+    enterLobby();
   }
 
   @override
@@ -340,7 +423,11 @@ class OnlineGameController extends StateNotifier<OnlineState> {
   }
 }
 
-final onlineGameControllerProvider =
-    StateNotifierProvider.autoDispose.family<OnlineGameController, OnlineState, OnlineConfig>(
-  (ref, config) => OnlineGameController(config),
+/// Single app-wide multiplayer connection — deliberately not a `family`
+/// and not `autoDispose` (see the class doc on [OnlineGameController]):
+/// created once, lives for the app's whole lifetime, and is read eagerly
+/// in `main.dart` so the socket is already connecting in the background
+/// before the player ever opens the multiplayer screen.
+final onlineGameControllerProvider = StateNotifierProvider<OnlineGameController, OnlineState>(
+  (ref) => OnlineGameController(ref),
 );

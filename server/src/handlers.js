@@ -19,6 +19,15 @@
  *   make_move       { roomCode, move }
  *   request_rematch { roomCode }
  *   leave_room      { roomCode }
+ *   enter_lobby     { nickname } — mark this socket as idle/challengeable
+ *                    (sent when the app's multiplayer lobby screen opens).
+ *   leave_lobby     {} — the opposite of enter_lobby (screen closed
+ *                    without starting a match).
+ *   challenge_player{ targetId } — directly starts a match against
+ *                    another currently-idle player by socket id, instead
+ *                    of the manual create/share-code/join dance. Both
+ *                    players must currently be idle or this fails with a
+ *                    room_error.
  *
  * Wire protocol (server -> client events):
  *   room_created        { roomCode, color }
@@ -42,6 +51,10 @@
  *                        disconnected/reconnected). Purely informational
  *                        for a lobby-screen indicator — it does not
  *                        affect matchmaking itself.
+ *   lobby_players       { players: [{id, nickname}] } — the actual list
+ *                        of other currently-idle players this socket can
+ *                        challenge (self excluded). Sent to every idle
+ *                        socket whenever the idle set changes.
  */
 
 const rooms = require('./rooms');
@@ -68,6 +81,19 @@ function broadcastLobbyStats(io) {
 }
 
 /**
+ * Sends each currently idle socket the up-to-date list of OTHER idle
+ * players (never includes yourself). Called whenever the idle set
+ * changes — entering/leaving the lobby, starting a match (manually or
+ * via a challenge), or disconnecting.
+ */
+function broadcastLobbyPlayers(io) {
+  const all = rooms.listIdlePlayers();
+  for (const player of all) {
+    io.to(player.id).emit('lobby_players', { players: all.filter((p) => p.id !== player.id) });
+  }
+}
+
+/**
  * Registers all Cyber Tavla protocol event handlers on a freshly connected
  * socket.
  * @param {import('socket.io').Server} io
@@ -83,6 +109,13 @@ function registerHandlers(io, socket) {
     const nickname = sanitizeNickname(payload && payload.nickname);
     const room = rooms.createRoom(socket.id, nickname);
     socket.join(room.code);
+
+    // No longer idle/challengeable now that they're setting up a room of
+    // their own via the manual code-sharing flow.
+    if (rooms.isIdle(socket.id)) {
+      rooms.leaveLobby(socket.id);
+      broadcastLobbyPlayers(io);
+    }
 
     socket.emit('room_created', { roomCode: room.code, color: 'white' });
     broadcastLobbyStats(io);
@@ -101,6 +134,11 @@ function registerHandlers(io, socket) {
     const { room } = result;
     socket.join(room.code);
 
+    if (rooms.isIdle(socket.id)) {
+      rooms.leaveLobby(socket.id);
+      broadcastLobbyPlayers(io);
+    }
+
     socket.emit('joined_room', {
       roomCode: room.code,
       color: 'black',
@@ -111,6 +149,52 @@ function registerHandlers(io, socket) {
 
     // Both seats are now filled: the match can begin.
     io.to(room.code).emit('game_start', { startingPlayer: room.startingPlayer });
+    broadcastLobbyStats(io);
+  });
+
+  socket.on('enter_lobby', (payload) => {
+    const nickname = sanitizeNickname(payload && payload.nickname) || 'Oyuncu';
+    rooms.enterLobby(socket.id, nickname);
+    broadcastLobbyPlayers(io);
+  });
+
+  socket.on('leave_lobby', () => {
+    if (!rooms.isIdle(socket.id)) return;
+    rooms.leaveLobby(socket.id);
+    broadcastLobbyPlayers(io);
+  });
+
+  socket.on('challenge_player', (payload) => {
+    const targetId = payload && payload.targetId;
+    const targetSocket = targetId ? io.sockets.sockets.get(targetId) : null;
+
+    if (!targetId || !targetSocket || !rooms.isIdle(socket.id) || !rooms.isIdle(targetId)) {
+      socket.emit('room_error', { message: 'Bu oyuncu artık uygun değil' });
+      return;
+    }
+
+    const challengerNickname = rooms.idleNickname(socket.id);
+    const targetNickname = rooms.idleNickname(targetId);
+
+    rooms.leaveLobby(socket.id);
+    rooms.leaveLobby(targetId);
+
+    const room = rooms.createRoom(socket.id, challengerNickname);
+    rooms.joinRoom(room.code, targetId, targetNickname);
+
+    socket.join(room.code);
+    targetSocket.join(room.code);
+
+    socket.emit('room_created', { roomCode: room.code, color: 'white' });
+    targetSocket.emit('joined_room', {
+      roomCode: room.code,
+      color: 'black',
+      opponentNickname: challengerNickname,
+    });
+    socket.emit('opponent_joined', { nickname: targetNickname });
+    io.to(room.code).emit('game_start', { startingPlayer: room.startingPlayer });
+
+    broadcastLobbyPlayers(io);
     broadcastLobbyStats(io);
   });
 
@@ -206,6 +290,11 @@ function registerHandlers(io, socket) {
   });
 
   socket.on('disconnect', () => {
+    if (rooms.isIdle(socket.id)) {
+      rooms.leaveLobby(socket.id);
+      broadcastLobbyPlayers(io);
+    }
+
     const found = rooms.markDisconnected(socket.id);
     if (!found) return;
     const { room } = found;

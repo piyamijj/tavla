@@ -25,6 +25,39 @@ const STALE_ROOM_TTL_MS = 6 * 60 * 60 * 1000; // 6 hours of total inactivity
 const rooms = new Map();
 
 /**
+ * Sockets that are connected and sitting on the multiplayer lobby screen,
+ * not currently in any room, and open to being challenged directly by
+ * another idle player (see `challenge_player` in handlers.js). Keyed by
+ * socket id, value is the nickname they entered the lobby with. A socket
+ * is added here by `enter_lobby` and removed by `leave_lobby`, a
+ * disconnect, or upon actually entering a room (manually or via a
+ * challenge) — being in this map is the definition of "idle".
+ * @type {Map<string, string>}
+ */
+const idlePlayers = new Map();
+
+function enterLobby(socketId, nickname) {
+  idlePlayers.set(socketId, nickname || 'Oyuncu');
+}
+
+function leaveLobby(socketId) {
+  idlePlayers.delete(socketId);
+}
+
+function isIdle(socketId) {
+  return idlePlayers.has(socketId);
+}
+
+function idleNickname(socketId) {
+  return idlePlayers.get(socketId);
+}
+
+/** @returns {Array<{id: string, nickname: string}>} every currently idle player. */
+function listIdlePlayers() {
+  return Array.from(idlePlayers.entries()).map(([id, nickname]) => ({ id, nickname }));
+}
+
+/**
  * @typedef {Object} Room
  * @property {string} code
  * @property {{white: string|null, black: string|null}} socketIds
@@ -278,4 +311,9 @@ module.exports = {
   sweepStaleRooms,
   roomCount,
   waitingRoomCount,
+  enterLobby,
+  leaveLobby,
+  isIdle,
+  idleNickname,
+  listIdlePlayers,
 };

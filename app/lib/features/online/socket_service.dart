@@ -53,6 +53,7 @@ class SocketService {
   final _rematchRequestedController = StreamController<void>.broadcast();
   final _rematchConfirmedController = StreamController<RematchConfirmedPayload>.broadcast();
   final _lobbyStatsController = StreamController<int>.broadcast();
+  final _lobbyPlayersController = StreamController<List<LobbyPlayer>>.broadcast();
   final _connectErrorController = StreamController<String>.broadcast();
   final _connectedController = StreamController<void>.broadcast();
   final _disconnectedController = StreamController<void>.broadcast();
@@ -92,6 +93,11 @@ class SocketService {
   /// whenever it changes — purely informational for a lobby-screen
   /// indicator, not tied to this client's own room state.
   Stream<int> get onLobbyStats => _lobbyStatsController.stream;
+
+  /// The other players currently idle in the lobby (self excluded) that
+  /// this socket can [challengePlayer]. Only populated for sockets that
+  /// have called [enterLobby]; sent again every time the idle set changes.
+  Stream<List<LobbyPlayer>> get onLobbyPlayers => _lobbyPlayersController.stream;
   Stream<String> get onConnectError => _connectErrorController.stream;
   Stream<void> get onConnected => _connectedController.stream;
   Stream<void> get onDisconnected => _disconnectedController.stream;
@@ -214,6 +220,14 @@ class SocketService {
       final count = map['waitingRooms'];
       _lobbyStatsController.add(count is int ? count : int.tryParse(count?.toString() ?? '') ?? 0);
     });
+    socket.on('lobby_players', (data) {
+      final map = _asMap(data);
+      final rawList = map['players'];
+      final players = (rawList is List)
+          ? rawList.map((e) => LobbyPlayer.fromJson(_asMap(e))).toList()
+          : <LobbyPlayer>[];
+      _lobbyPlayersController.add(players);
+    });
 
     _socket = socket;
   }
@@ -226,6 +240,26 @@ class SocketService {
 
   void createRoom(String nickname) {
     _socket?.emit('create_room', {'nickname': nickname});
+  }
+
+  /// Marks this socket idle/challengeable in the lobby under [nickname].
+  /// Safe to call before the socket has actually connected — Socket.io
+  /// buffers emits made while disconnected and flushes them on connect.
+  void enterLobby(String nickname) {
+    _socket?.emit('enter_lobby', {'nickname': nickname});
+  }
+
+  /// Opposite of [enterLobby] — leaves the lobby screen without starting
+  /// a match, so this socket stops showing up in others' challenge lists.
+  void leaveLobby() {
+    _socket?.emit('leave_lobby', {});
+  }
+
+  /// Directly starts a match against another idle player by socket id
+  /// (see [LobbyPlayer.id]), skipping the manual create/share-code/join
+  /// flow. Fails with a `room_error` if [targetId] is no longer idle.
+  void challengePlayer(String targetId) {
+    _socket?.emit('challenge_player', {'targetId': targetId});
   }
 
   void joinRoom(String roomCode, String nickname) {
@@ -278,6 +312,7 @@ class SocketService {
     _rematchRequestedController.close();
     _rematchConfirmedController.close();
     _lobbyStatsController.close();
+    _lobbyPlayersController.close();
     _connectErrorController.close();
     _connectedController.close();
     _disconnectedController.close();
