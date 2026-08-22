@@ -1,0 +1,88 @@
+# Cyber Tavla - Android APK otomatik derleme
+#
+# Bu sandbox ortaminda yerel bir Flutter/Android SDK bulunmuyor, bu yuzden
+# APK burada derlenemiyor. Bunun yerine her main dalina push oldugunda (veya
+# elle tetiklendiginde) GitHub Actions uzerinde gercek bir Android SDK ile
+# derleme yapilir; sonuc hem bir build artifact olarak hem de "latest-apk"
+# adinda surekli guncellenen bir GitHub Release varligi olarak yayinlanir.
+#
+# android/ platform klasoru bu repoda commit'lenmemistir (yerelde
+# `flutter create` calistirilamadigi icin) - CI adimlarindan biri, mevcut
+# pubspec.yaml ve lib/ icerigini bozmadan yalnizca eksik android/ iskeletini
+# ekler.
+
+name: Build Android APK
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  build-apk:
+    name: Flutter APK derle
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Depoyu al
+        uses: actions/checkout@v4
+
+      - name: Java (Temurin 17) kur
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Flutter SDK kur
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: Eksik android/ platform iskeletini olustur
+        working-directory: app
+        run: flutter create --platforms=android .
+
+      - name: Bagimliliklari yukle
+        working-directory: app
+        run: flutter pub get
+
+      - name: Statik analiz (bilgi amacli, derlemeyi durdurmaz)
+        working-directory: app
+        run: flutter analyze || true
+
+      - name: Birim testlerini calistir (bilgi amacli, derlemeyi durdurmaz)
+        working-directory: app
+        run: flutter test || true
+
+      - name: Release APK derle
+        working-directory: app
+        run: flutter build apk --release
+
+      - name: APK'yi build artifact olarak yukle
+        uses: actions/upload-artifact@v4
+        with:
+          name: cyber-tavla-apk
+          path: app/build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: APK'yi GitHub Release'e yayinla
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest-apk
+          name: "Cyber Tavla - Son Derleme"
+          body: |
+            Bu, `main` dalina yapilan en son push sonrasinda otomatik olarak
+            derlenen Cyber Tavla Android APK'sidir. Asagidaki Assets
+            bolumunden `app-release.apk` dosyasini indirip telefonunuza
+            kurabilirsiniz (bilinmeyen kaynaklardan uygulama kurulumuna izin
+            vermeniz gerekebilir).
+          prerelease: true
+          files: app/build/app/outputs/flutter-apk/app-release.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
