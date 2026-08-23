@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../core/diagnostics/diagnostic_log.dart';
 import '../../shared/game_state.dart';
 import '../../shared/moves.dart';
 import '../../shared/player.dart';
@@ -190,6 +191,21 @@ class OnlineGameController extends StateNotifier<OnlineState> {
     });
   }
 
+  /// Appends the most recent globally-captured uncaught error (see
+  /// [DiagnosticLog], wired in `main.dart` via `runZonedGuarded` +
+  /// `FlutterError.onError`) to a connection-error message, if any was
+  /// seen since launch. `socket_io_client`'s own `onConnectError`/`onError`
+  /// only report what the package itself decides to surface (e.g. its
+  /// own internal connect-timeout firing with the bare string
+  /// `'timeout'`, no matter what actually happened underneath) — this is
+  /// the one channel that can catch something that broke somewhere else
+  /// entirely and would otherwise vanish with zero trace on a real
+  /// device with no PC/adb access.
+  String _withDiagnosticLog(String message) {
+    if (!DiagnosticLog.hasEntries) return message;
+    return '$message\n(genel hata günlüğü: ${DiagnosticLog.latest})';
+  }
+
   void _connect(String serverUrl) {
     _connectedServerUrl = serverUrl;
     state = state.copyWith(
@@ -214,7 +230,10 @@ class OnlineGameController extends StateNotifier<OnlineState> {
         final message = (detail == null || detail.isEmpty)
             ? 'Sunucuya bağlanılamadı (zaman aşımı)\n(sunucu: $serverUrl)'
             : 'Sunucuya bağlanılamadı (zaman aşımı)\n(detay: $detail)\n(sunucu: $serverUrl)';
-        state = state.copyWith(status: ConnectionStatus.error, errorMessage: message);
+        state = state.copyWith(
+          status: ConnectionStatus.error,
+          errorMessage: _withDiagnosticLog(message),
+        );
       }
     });
 
@@ -263,7 +282,10 @@ class OnlineGameController extends StateNotifier<OnlineState> {
         final message = (detail == null || detail.isEmpty)
             ? 'Sunucuya bağlanılamadı\n(sunucu: $serverUrl)'
             : 'Sunucuya bağlanılamadı\n(detay: $detail)\n(sunucu: $serverUrl)';
-        state = state.copyWith(status: ConnectionStatus.error, errorMessage: message);
+        state = state.copyWith(
+          status: ConnectionStatus.error,
+          errorMessage: _withDiagnosticLog(message),
+        );
       }),
       _socket.onReconnectAttempt.listen((_) {
         // The first attempt never got a callback here — this only fires

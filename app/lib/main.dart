@@ -1,13 +1,49 @@
+import 'dart:async';
+
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'app/router.dart';
 import 'app/theme.dart';
 import 'core/constants/app_strings.dart';
+import 'core/diagnostics/diagnostic_log.dart';
 import 'features/online/online_providers.dart';
 import 'features/settings/settings_providers.dart';
 
 void main() {
+  // Diagnostic hardening (see project history: a real device shows a
+  // generic connection timeout with no server-side trace whatsoever,
+  // reproducible identically on WiFi and mobile data, with no PC/adb
+  // access available to investigate further). The `_lastErrorDetail`
+  // shown in the connection error message only ever reflects what
+  // socket_io_client's OWN `onConnectError`/`onError` callbacks report —
+  // if the true underlying cause throws somewhere else entirely (a
+  // Timer callback deep in a package's internals, any other spot not
+  // wrapped in a local try/catch), it currently vanishes with zero
+  // trace in a release build. `runZonedGuarded` + `FlutterError.onError`
+  // catch both of those categories and record them in [DiagnosticLog],
+  // which the connection-error UI then appends to its message — so the
+  // device itself can surface a swallowed exception without adb.
+  FlutterError.onError = (FlutterErrorDetails details) {
+    DiagnosticLog.record(
+      'flutter',
+      details.exceptionAsString(),
+      details.stack?.toString().split('\n').take(2).join(' / '),
+    );
+    FlutterError.presentError(details);
+  };
+
+  runZonedGuarded(_runApp, (Object error, StackTrace stack) {
+    DiagnosticLog.record(
+      'zone',
+      error.toString(),
+      stack.toString().split('\n').take(2).join(' / '),
+    );
+  });
+}
+
+void _runApp() {
   // Must be the very first call: everything below (the ProviderContainer
   // read, which eagerly constructs SettingsController and calls
   // SharedPreferences.getInstance() — a platform-channel round trip) runs
